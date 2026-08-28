@@ -6,6 +6,8 @@ import {
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 
+import { DatabaseModule } from './database';
+
 import { configuration, envValidationSchema } from './config';
 import { LoggingInterceptor } from './common/interceptors';
 import { LoggerModule } from './common/logging';
@@ -21,6 +23,7 @@ import { requestIdMiddleware } from './common/middleware/request-id.middleware';
       validationSchema: envValidationSchema,
     }),
     LoggerModule,
+    DatabaseModule,
   ],
   providers: [
     {
