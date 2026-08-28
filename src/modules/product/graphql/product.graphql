@@ -1,0 +1,63 @@
+type Product {
+  id: ID!
+  name: String!
+  description: String!
+  price: Float!
+  stock: Int!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type ProductConnection {
+  items: [Product!]!
+  total: Int!
+  page: Int!
+  limit: Int!
+  totalPages: Int!
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+}
+
+enum ProductSortField {
+  CREATED_AT
+  UPDATED_AT
+  NAME
+  PRICE
+  STOCK
+}
+
+input CreateProductInput {
+  name: String!
+  description: String!
+  price: Float!
+  stock: Int = 0
+}
+
+input UpdateProductInput {
+  name: String
+  description: String
+  price: Float
+  stock: Int
+}
+
+extend type Query {
+  products(
+    page: Int = 1
+    limit: Int = 20
+    sortBy: ProductSortField = CREATED_AT
+    sortOrder: SortOrder = DESC
+    search: String
+  ): ProductConnection!
+
+  product(id: ID!): Product!
+}
+
+extend type Mutation {
+  createProduct(input: CreateProductInput!): Product!
+  updateProduct(id: ID!, input: UpdateProductInput!): Product!
+  deleteProduct(id: ID!): Boolean!
+}
+
+extend type Subscription {
+  productCreated: Product!
+}

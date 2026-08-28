@@ -1,0 +1,67 @@
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+type Order {
+  id: ID!
+  quantity: Int!
+  status: OrderStatus!
+  user: User!
+  product: Product!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type OrderConnection {
+  items: [Order!]!
+  total: Int!
+  page: Int!
+  limit: Int!
+  totalPages: Int!
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+}
+
+enum OrderSortField {
+  CREATED_AT
+  UPDATED_AT
+  QUANTITY
+  STATUS
+}
+
+input CreateOrderInput {
+  userId: ID!
+  productId: ID!
+  quantity: Int!
+}
+
+input UpdateOrderInput {
+  quantity: Int
+  status: OrderStatus
+}
+
+extend type Query {
+  orders(
+    page: Int = 1
+    limit: Int = 20
+    sortBy: OrderSortField = CREATED_AT
+    sortOrder: SortOrder = DESC
+    status: OrderStatus
+  ): OrderConnection!
+
+  order(id: ID!): Order!
+}
+
+extend type Mutation {
+  createOrder(input: CreateOrderInput!): Order!
+  updateOrder(id: ID!, input: UpdateOrderInput!): Order!
+  deleteOrder(id: ID!): Boolean!
+}
+
+extend type Subscription {
+  orderCreated(userId: ID!): Order!
+}
