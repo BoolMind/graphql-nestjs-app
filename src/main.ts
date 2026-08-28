@@ -8,11 +8,19 @@ import { ValidationPipe } from './common/pipes';
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
 
-  app.useGlobalFilters(new AllExceptionsFilter());
-  app.useGlobalPipes(new ValidationPipe());
+  app.useGlobalFilters(
+    new AllExceptionsFilter(),
+  );
 
-  const configService = app.get(ConfigService);
-  const port = configService.getOrThrow<number>('app.port');
+  app.useGlobalPipes(
+    new ValidationPipe(),
+  );
+
+  const configService =
+    app.get(ConfigService);
+
+  const port =
+    configService.getOrThrow<number>('app.port');
 
   await app.listen(port);
 }

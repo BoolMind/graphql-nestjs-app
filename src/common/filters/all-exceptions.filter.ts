@@ -47,8 +47,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
       const message =
         typeof exceptionResponse === 'string'
           ? exceptionResponse
-          : (exceptionResponse as { message?: unknown }).message ??
-            'Request failed';
+          : ((exceptionResponse as { message?: unknown }).message ??
+            'Request failed');
 
       response.status(status).json({
         statusCode: status,

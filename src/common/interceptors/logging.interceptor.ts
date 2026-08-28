@@ -5,42 +5,70 @@ import {
   Logger,
   NestInterceptor,
 } from '@nestjs/common';
+import { GqlExecutionContext } from '@nestjs/graphql';
 import { Observable, tap } from 'rxjs';
 
-import { REQUEST_ID_HEADER } from '../middleware/request-id.middleware';
+interface GraphQLContext {
+  requestId?: string;
+  req?: {
+    header(name: string): string | undefined;
+  };
+}
 
 @Injectable()
-export class LoggingInterceptor implements NestInterceptor {
-  private readonly logger = new Logger('HTTP');
+export class LoggingInterceptor
+  implements NestInterceptor
+{
+  private readonly logger =
+    new Logger(LoggingInterceptor.name);
 
   intercept(
     context: ExecutionContext,
     next: CallHandler,
   ): Observable<unknown> {
-    const request = context.switchToHttp().getRequest();
-    const response = context.switchToHttp().getResponse();
-
-    const method = request.method;
-    const url = request.originalUrl ?? request.url;
-    const requestId = request.header(REQUEST_ID_HEADER);
-
     const startedAt = Date.now();
+
+    if (context.getType() !== 'http') {
+      return next.handle();
+    }
+
+    const gqlContext =
+      GqlExecutionContext.create(context);
+
+    const requestContext =
+      gqlContext.getContext<GraphQLContext>();
+
+    const requestId =
+      requestContext.requestId ??
+      requestContext.req?.header('x-request-id') ??
+      'unknown';
+
+    const info = gqlContext.getInfo();
+
+    const operation =
+      info?.fieldName ?? 'unknown';
+
+    const operationType =
+      info?.parentType?.name ?? 'unknown';
 
     return next.handle().pipe(
       tap({
         next: () => {
-          const duration = Date.now() - startedAt;
-
           this.logger.log(
-            `${method} ${url} ${response.statusCode} ${duration}ms requestId=${requestId ?? 'unknown'}`,
+            `GraphQL ${operationType}.${operation} ` +
+            `requestId=${requestId} ` +
+            `duration=${Date.now() - startedAt}ms`,
           );
         },
-        error: (error: unknown) => {
-          const duration = Date.now() - startedAt;
 
+        error: (error: unknown) => {
           this.logger.error(
-            `${method} ${url} ${response.statusCode} ${duration}ms requestId=${requestId ?? 'unknown'}`,
-            error instanceof Error ? error.stack : undefined,
+            `GraphQL ${operationType}.${operation} ` +
+            `requestId=${requestId} ` +
+            `duration=${Date.now() - startedAt}ms`,
+            error instanceof Error
+              ? error.stack
+              : String(error),
           );
         },
       }),

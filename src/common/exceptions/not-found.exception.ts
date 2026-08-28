@@ -1,16 +1,8 @@
-import { AppException } from './app.exception';
+import { HttpStatus } from '@nestjs/common';
+import { AppException, ErrorCode } from './app.exception';
 
 export class NotFoundException extends AppException {
-  constructor(
-    resource: string,
-    details?: unknown,
-  ) {
-    super({
-      code: 'NOT_FOUND',
-      message: `${resource} not found`,
-      details,
-    });
-
-    this.name = 'NotFoundException';
+  constructor(message = 'Resource not found') {
+    super(message, ErrorCode.NOT_FOUND, HttpStatus.NOT_FOUND);
   }
 }

@@ -1,0 +1,10 @@
+scalar DateTime
+
+enum SortOrder {
+  ASC
+  DESC
+}
+
+type Query
+
+type Mutation

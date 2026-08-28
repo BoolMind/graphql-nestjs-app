@@ -1,16 +1,8 @@
-import { AppException } from './app.exception';
+import { HttpStatus } from '@nestjs/common';
+import { AppException, ErrorCode } from './app.exception';
 
 export class ValidationException extends AppException {
-  constructor(
-    message: string,
-    details?: unknown,
-  ) {
-    super({
-      code: 'VALIDATION_ERROR',
-      message,
-      details,
-    });
-
-    this.name = 'ValidationException';
+  constructor(message = 'Validation failed', details?: unknown) {
+    super(message, ErrorCode.VALIDATION_ERROR, HttpStatus.BAD_REQUEST, details);
   }
 }

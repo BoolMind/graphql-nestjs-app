@@ -1,12 +1,9 @@
-import {
-  MiddlewareConsumer,
-  Module,
-  NestModule,
-} from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 
 import { DatabaseModule } from './database';
+import { AppGraphQLModule } from './graphql/graphql.module';
 
 import { configuration, envValidationSchema } from './config';
 import { LoggingInterceptor } from './common/interceptors';
@@ -24,6 +21,7 @@ import { requestIdMiddleware } from './common/middleware/request-id.middleware';
     }),
     LoggerModule,
     DatabaseModule,
+    AppGraphQLModule,
   ],
   providers: [
     {

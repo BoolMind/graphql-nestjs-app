@@ -1,45 +1,22 @@
 import {
-  Brackets,
   DeepPartial,
-  EntityManager,
   FindOneOptions,
-  FindOptionsRelations,
-  ObjectLiteral,
+  FindOptionsWhere,
   Repository,
-  SelectQueryBuilder,
 } from 'typeorm';
 
+import { DEFAULT_LIMIT, DEFAULT_PAGE, MAX_LIMIT } from '../../constants';
+
+import { ListArgs, PaginatedResult } from '../../types';
+
 import { NotFoundException } from '../../exceptions';
-import {
-  DEFAULT_LIMIT,
-  DEFAULT_PAGE,
-  MAX_LIMIT,
-} from '../../constants';
-import {
-  ListArgs,
-  PaginatedResult,
-} from '../../types';
 
 export abstract class BaseService<
-  TEntity extends ObjectLiteral,
-  TCreateInput,
-  TUpdateInput,
+  TEntity extends { id: string },
+  TCreateInput extends DeepPartial<TEntity> = DeepPartial<TEntity>,
+  TUpdateInput extends DeepPartial<TEntity> = DeepPartial<TEntity>,
 > {
-  protected constructor(
-    protected readonly repository: Repository<TEntity>,
-  ) {}
-
-  protected get alias(): string {
-    return this.repository.metadata.tableName;
-  }
-
-  protected entityLabel(): string {
-    return this.repository.metadata.targetName;
-  }
-
-  protected relations(): FindOptionsRelations<TEntity> {
-    return {};
-  }
+  protected constructor(protected readonly repository: Repository<TEntity>) {}
 
   protected searchableFields(): string[] {
     return [];
@@ -49,95 +26,75 @@ export abstract class BaseService<
     return {};
   }
 
-  protected defaultSortField(): string {
-    return 'createdAt';
+  protected entityName(): string {
+    return this.repository.metadata.name;
   }
 
-  protected applyFilters(
-    _queryBuilder: SelectQueryBuilder<TEntity>,
-    _alias: string,
-    _args: ListArgs,
-  ): void {}
+  async findById(id: string): Promise<TEntity> {
+    const entity = await this.repository.findOne({
+      where: { id } as FindOptionsWhere<TEntity>,
+    });
 
-  protected repositoryFor(manager?: EntityManager): Repository<TEntity> {
-    return manager
-      ? manager.getRepository(this.repository.target)
-      : this.repository;
+    if (!entity) {
+      throw new NotFoundException(`${this.entityName()} not found`);
+    }
+
+    return entity;
   }
 
-  protected async findOne(
-    options: FindOneOptions<TEntity>,
-    manager?: EntityManager,
-  ): Promise<TEntity | null> {
-    return this.repositoryFor(manager).findOne(options);
+  async findOne(options: FindOneOptions<TEntity>): Promise<TEntity | null> {
+    return this.repository.findOne(options);
   }
 
-  async findAll(
-    args: ListArgs = {},
+  async findAll<TSortField extends string = string>(
+    args: ListArgs<TSortField> = {},
   ): Promise<PaginatedResult<TEntity>> {
-    const page = Math.max(
-      DEFAULT_PAGE,
-      Math.trunc(args.page ?? DEFAULT_PAGE),
-    );
+    const rawPage = Number(args.page ?? DEFAULT_PAGE);
 
-    const limit = Math.min(
-      MAX_LIMIT,
-      Math.max(1, Math.trunc(args.limit ?? DEFAULT_LIMIT)),
-    );
+    const rawLimit = Number(args.limit ?? DEFAULT_LIMIT);
 
-    const alias = this.alias;
-    const qb = this.repository.createQueryBuilder(alias);
+    const page = Number.isFinite(rawPage)
+      ? Math.max(DEFAULT_PAGE, Math.floor(rawPage))
+      : DEFAULT_PAGE;
 
-    const relations = this.relations();
+    const limit = Number.isFinite(rawLimit)
+      ? Math.min(MAX_LIMIT, Math.max(1, Math.floor(rawLimit)))
+      : DEFAULT_LIMIT;
 
-    for (const relation of Object.keys(relations)) {
-      qb.leftJoinAndSelect(
-        `${alias}.${relation}`,
-        relation,
-      );
+    const skip = (page - 1) * limit;
+
+    const sortMap = this.sortFieldMap();
+
+    const sortColumn =
+      args.sortBy && sortMap[args.sortBy]
+        ? sortMap[args.sortBy]
+        : (sortMap.CREATED_AT ?? 'createdAt');
+
+    const sortOrder = args.sortOrder === 'ASC' ? 'ASC' : 'DESC';
+
+    const queryBuilder = this.repository.createQueryBuilder('entity');
+
+    if (args.search?.trim()) {
+      const fields = this.searchableFields();
+
+      if (fields.length > 0) {
+        const search = `%${args.search.trim()}%`;
+
+        queryBuilder.andWhere(
+          fields.map((field) => `entity.${field} LIKE :search`).join(' OR '),
+          { search },
+        );
+      }
     }
 
-    this.applyFilters(qb, alias, args);
+    queryBuilder
+      .orderBy(`entity.${sortColumn}`, sortOrder)
+      .skip(skip)
+      .take(limit);
 
-    const search = args.search?.trim();
-    const searchableFields = this.searchableFields();
+    const [items, total] = await queryBuilder.getManyAndCount();
 
-    if (search && searchableFields.length > 0) {
-      qb.andWhere(
-        new Brackets((subQuery) => {
-          searchableFields.forEach((field, index) => {
-            const clause = `${alias}.${field} LIKE :search`;
-
-            if (index === 0) {
-              subQuery.where(clause, {
-                search: `%${search}%`,
-              });
-            } else {
-              subQuery.orWhere(clause, {
-                search: `%${search}%`,
-              });
-            }
-          });
-        }),
-      );
-    }
-
-    const sortField =
-      (args.sortBy &&
-        this.sortFieldMap()[args.sortBy]) ||
-      this.defaultSortField();
-
-    qb.orderBy(
-      `${alias}.${sortField}`,
-      args.sortOrder ?? 'DESC',
-    );
-
-    qb.skip((page - 1) * limit).take(limit);
-
-    const [items, total] = await qb.getManyAndCount();
-
-    const totalPages =
-      total === 0 ? 0 : Math.ceil(total / limit);
+    const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
 
     return {
       items,
@@ -146,43 +103,20 @@ export abstract class BaseService<
       limit,
       totalPages,
       hasNextPage: page < totalPages,
-      hasPreviousPage: page > 1,
+      hasPreviousPage: page > 1 && totalPages > 0,
     };
   }
 
-  async findById(
-    id: string,
-    manager?: EntityManager,
-  ): Promise<TEntity> {
-    const entity = await this.repositoryFor(manager).findOne({
-      where: { id } as any,
-      relations: this.relations(),
-    });
-
-    if (!entity) {
-      throw new NotFoundException(
-        `${this.entityLabel()} with id "${id}" was not found`,
-      );
-    }
-
-    return entity;
-  }
-
-  async create(data: TCreateInput): Promise<TEntity> {
-    const entity = this.repository.create(
-      data as DeepPartial<TEntity>,
-    );
+  async create(input: TCreateInput): Promise<TEntity> {
+    const entity = this.repository.create(input);
 
     return this.repository.save(entity);
   }
 
-  async update(
-    id: string,
-    data: TUpdateInput,
-  ): Promise<TEntity> {
+  async update(id: string, input: TUpdateInput): Promise<TEntity> {
     const entity = await this.findById(id);
 
-    Object.assign(entity, data);
+    this.repository.merge(entity, input as DeepPartial<TEntity>);
 
     return this.repository.save(entity);
   }

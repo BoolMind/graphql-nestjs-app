@@ -1,16 +1,8 @@
-import { AppException } from './app.exception';
+import { HttpStatus } from '@nestjs/common';
+import { AppException, ErrorCode } from './app.exception';
 
 export class ConflictException extends AppException {
-  constructor(
-    message: string,
-    details?: unknown,
-  ) {
-    super({
-      code: 'CONFLICT',
-      message,
-      details,
-    });
-
-    this.name = 'ConflictException';
+  constructor(message = 'Resource already exists') {
+    super(message, ErrorCode.CONFLICT, HttpStatus.CONFLICT);
   }
 }

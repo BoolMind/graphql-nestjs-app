@@ -1,0 +1,52 @@
+type User {
+  id: ID!
+  name: String!
+  email: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type UserConnection {
+  items: [User!]!
+  total: Int!
+  page: Int!
+  limit: Int!
+  totalPages: Int!
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+}
+
+enum UserSortField {
+  CREATED_AT
+  UPDATED_AT
+  NAME
+  EMAIL
+}
+
+input CreateUserInput {
+  name: String!
+  email: String!
+}
+
+input UpdateUserInput {
+  name: String
+  email: String
+}
+
+extend type Query {
+  users(
+    page: Int = 1
+    limit: Int = 20
+    sortBy: UserSortField = CREATED_AT
+    sortOrder: SortOrder = DESC
+    search: String
+  ): UserConnection!
+
+  user(id: ID!): User!
+}
+
+extend type Mutation {
+  createUser(input: CreateUserInput!): User!
+  updateUser(id: ID!, input: UpdateUserInput!): User!
+  deleteUser(id: ID!): Boolean!
+}
