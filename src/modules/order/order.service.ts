@@ -1,11 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  FindOptionsRelations,
-  QueryFailedError,
-  Repository,
-  SelectQueryBuilder,
-} from 'typeorm';
+import { FindOptionsRelations, Repository, SelectQueryBuilder } from 'typeorm';
 
 import {
   BaseService,
@@ -33,6 +28,14 @@ const SORT_FIELD_MAP: Record<OrderSortField, string> = {
   STATUS: 'status',
 };
 
+const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
+  [OrderStatus.CONFIRMED]: [OrderStatus.SHIPPED, OrderStatus.CANCELLED],
+  [OrderStatus.SHIPPED]: [OrderStatus.DELIVERED],
+  [OrderStatus.DELIVERED]: [],
+  [OrderStatus.CANCELLED]: [],
+};
+
 @Injectable()
 export class OrderService extends BaseService<
   Order,
@@ -43,22 +46,13 @@ export class OrderService extends BaseService<
     @InjectRepository(Order)
     repository: Repository<Order>,
 
-    @InjectRepository(User)
-    private readonly userRepository: Repository<User>,
-
-    @InjectRepository(Product)
-    private readonly productRepository: Repository<Product>,
-
     private readonly transactionService: TransactionService,
   ) {
     super(repository);
   }
 
   protected override relations(): FindOptionsRelations<Order> {
-    return {
-      user: true,
-      product: true,
-    };
+    return { user: true, product: true };
   }
 
   protected override sortFieldMap(): Record<string, string> {
@@ -71,100 +65,116 @@ export class OrderService extends BaseService<
     args: OrderListArgs,
   ): void {
     if (args.status) {
-      qb.andWhere(`${alias}.status = :status`, {
-        status: args.status,
-      });
+      qb.andWhere(`${alias}.status = :status`, { status: args.status });
     }
   }
 
   async create(input: CreateOrderData): Promise<Order> {
-    return this.transactionService.run(
-      async (manager) => {
-        const user = await manager
-          .getRepository(User)
-          .findOne({
-            where: {
-              id: input.userId,
-            },
-          });
+    return this.transactionService.run(async (manager) => {
+      const user = await manager.findOne(User, {
+        where: { id: input.userId },
+      });
 
-        if (!user) {
-          throw new NotFoundException(
-            `User with id "${input.userId}" not found`,
-          );
-        }
+      if (!user) {
+        throw new NotFoundException(`User with id "${input.userId}" not found`);
+      }
 
-        const product = await manager
-          .getRepository(Product)
-          .createQueryBuilder('product')
-          .setLock('pessimistic_write')
-          .where('product.id = :id', {
-            id: input.productId,
-          })
-          .getOne();
+      const product = await manager.findOne(Product, {
+        where: { id: input.productId },
+        lock: {
+          mode: 'pessimistic_write',
+        },
+      });
 
-        if (!product) {
-          throw new NotFoundException(
-            `Product with id "${input.productId}" not found`,
-          );
-        }
+      if (!product) {
+        throw new NotFoundException(
+          `Product with id "${input.productId}" not found`,
+        );
+      }
 
-        if (product.stock < input.quantity) {
-          throw new ConflictException(
-            `Cannot order ${input.quantity} unit(s) of "${product.name}" — only ${product.stock} in stock`,
-          );
-        }
+      if (product.stock < input.quantity) {
+        throw new ConflictException(
+          `Cannot order ${input.quantity} unit(s) of "${product.name}" — only ${product.stock} in stock`,
+        );
+      }
 
-        product.stock -= input.quantity;
+      product.stock -= input.quantity;
+      await manager.save(Product, product);
 
-        await manager
-          .getRepository(Product)
-          .save(product);
+      const order = manager.create(Order, {
+        quantity: input.quantity,
+        status: OrderStatus.PENDING,
+        user,
+        product,
+      });
 
-        const order = manager.create(Order, {
-          quantity: input.quantity,
-          status: OrderStatus.PENDING,
-          user,
-          product,
-        });
-
-        try {
-          return await manager.save(Order, order);
-        } catch (error) {
-          this.handleDatabaseError(error);
-        }
-      },
-    );
+      return manager.save(Order, order);
+    });
   }
 
-  async update(
-    id: string,
-    input: UpdateOrderData,
-  ): Promise<Order> {
-    const order = await this.findById(id);
-
-    if (input.quantity !== undefined) {
+  async update(id: string, input: UpdateOrderData): Promise<Order> {
+    if ((input as { quantity?: number }).quantity !== undefined) {
       throw new ConflictException(
         'Order quantity cannot be changed after creation',
       );
     }
 
-    Object.assign(order, input);
+    if (input.status === OrderStatus.CANCELLED) {
+      return this.transactionService.run(async (manager) => {
+        const order = await manager.findOne(Order, {
+          where: { id },
+          relations: {
+            product: true,
+            user: true,
+          },
+          lock: {
+            mode: 'pessimistic_write',
+          },
+        });
 
-    try {
-      return await this.repository.save(order);
-    } catch (error) {
-      this.handleDatabaseError(error);
+        if (!order) {
+          throw new NotFoundException(`Order with id "${id}" not found`);
+        }
+
+        if (order.status === OrderStatus.CANCELLED) {
+          throw new ConflictException('Order is already cancelled');
+        }
+
+        const allowed = ALLOWED_TRANSITIONS[order.status] ?? [];
+
+        if (!allowed.includes(OrderStatus.CANCELLED)) {
+          throw new ConflictException(
+            `Cannot transition order from ${order.status} to ${OrderStatus.CANCELLED}`,
+          );
+        }
+
+        await manager
+          .createQueryBuilder()
+          .update(Product)
+          .set({
+            stock: () => `stock + ${order.quantity}`,
+          })
+          .where('id = :id', { id: order.product.id })
+          .execute();
+
+        order.status = OrderStatus.CANCELLED;
+
+        return manager.save(Order, order);
+      });
     }
-  }
 
-  private handleDatabaseError(error: unknown): never {
-    if (error instanceof QueryFailedError) {
-      throw new ConflictException(
-        'Unable to complete the order operation',
-      );
+    const order = await this.findById(id);
+
+    if (input.status && input.status !== order.status) {
+      const allowed = ALLOWED_TRANSITIONS[order.status] ?? [];
+
+      if (!allowed.includes(input.status)) {
+        throw new ConflictException(
+          `Cannot transition order from ${order.status} to ${input.status}`,
+        );
+      }
     }
 
-    throw error;
+    return super.update(id, input);
   }
 }

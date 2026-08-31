@@ -1,3 +1,4 @@
+import { Inject } from '@nestjs/common';
 import {
   Args,
   ID,
@@ -11,21 +12,16 @@ import { PubSub } from 'graphql-subscriptions';
 
 import { Order } from '../entities/order.entity';
 import { OrderService } from '../order.service';
-import type {
-  OrderListArgs,
-} from '../order.types';
+import type { OrderListArgs } from '../order.types';
+import { CreateOrderInput, UpdateOrderInput } from './inputs';
 
-import {
-  CreateOrderInput,
-  UpdateOrderInput,
-} from './inputs';
-
-export const ORDER_CREATED = 'ORDER_CREATED';
+import { PUBSUB, PUBSUB_EVENTS } from '../../../graphql/subscriptions/pubsub';
 
 @Resolver(() => Order)
 export class OrderResolver {
   constructor(
     private readonly orderService: OrderService,
+    @Inject(PUBSUB)
     private readonly pubSub: PubSub,
   ) {}
 
@@ -54,15 +50,13 @@ export class OrderResolver {
     @Args('status', { nullable: true })
     status: OrderListArgs['status'],
   ) {
-    const args: OrderListArgs = {
+    return this.orderService.findAll({
       page,
       limit,
       sortBy,
       sortOrder,
       status,
-    };
-
-    return this.orderService.findAll(args);
+    } as OrderListArgs);
   }
 
   @Query('order')
@@ -80,7 +74,7 @@ export class OrderResolver {
   ) {
     const order = await this.orderService.create(input);
 
-    await this.pubSub.publish(ORDER_CREATED, {
+    await this.pubSub.publish(PUBSUB_EVENTS.ORDER_CREATED, {
       orderCreated: order,
     });
 
@@ -98,25 +92,11 @@ export class OrderResolver {
     return this.orderService.update(id, input);
   }
 
-  @Mutation('deleteOrder')
-  async deleteOrder(
-    @Args('id', { type: () => ID })
-    id: string,
-  ) {
-    return this.orderService.delete(id);
-  }
-
   @Subscription('orderCreated', {
-    filter: (
-      payload: { orderCreated: Order },
-      variables: { userId: string },
-    ) =>
-      payload.orderCreated.user?.id ===
-      variables.userId,
+    filter: (payload: { orderCreated: Order }, variables: { userId: string }) =>
+      payload.orderCreated.user?.id === variables.userId,
   })
   orderCreated() {
-    return this.pubSub.asyncIterableIterator(
-      ORDER_CREATED,
-    );
+    return this.pubSub.asyncIterableIterator(PUBSUB_EVENTS.ORDER_CREATED);
   }
 }

@@ -1,11 +1,7 @@
 import type { ListArgs } from '../../common/types';
 
 export type ProductSortField =
-  | 'CREATED_AT'
-  | 'UPDATED_AT'
-  | 'NAME'
-  | 'PRICE'
-  | 'STOCK';
+  'CREATED_AT' | 'UPDATED_AT' | 'NAME' | 'PRICE' | 'STOCK';
 
 export interface CreateProductData {
   name: string;

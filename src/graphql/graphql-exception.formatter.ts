@@ -1,49 +1,54 @@
 import { GraphQLError } from 'graphql';
 import type { GraphQLFormattedError } from 'graphql';
 
-import { AppException } from '../common/exceptions';
+import { AppException, ErrorCode } from '../common/exceptions';
 
 export function formatGraphQLError(
   formattedError: GraphQLFormattedError,
   error: unknown,
 ): GraphQLFormattedError {
   const originalError =
-    error instanceof GraphQLError
-      ? error.originalError
-      : undefined;
-
-  let code =
-    typeof formattedError.extensions?.code === 'string'
-      ? formattedError.extensions.code
-      : undefined;
-
-  let details =
-    formattedError.extensions?.details;
+    error instanceof GraphQLError ? error.originalError : undefined;
 
   if (originalError instanceof AppException) {
-    code = originalError.code;
-    details = originalError.details;
+    const code = originalError.code;
+
+    return {
+      message:
+        code === ErrorCode.INTERNAL_ERROR
+          ? 'Internal server error'
+          : formattedError.message,
+
+      locations: formattedError.locations,
+      path: formattedError.path,
+
+      extensions: {
+        code,
+        ...(code !== ErrorCode.VALIDATION_ERROR &&
+        originalError.details !== undefined
+          ? { details: originalError.details }
+          : {}),
+      },
+    };
   }
 
-  code ??= 'INTERNAL_SERVER_ERROR';
-
-  const isInternal =
-    code === 'INTERNAL_SERVER_ERROR';
+  if (error instanceof GraphQLError && !originalError) {
+    return {
+      message: formattedError.message,
+      locations: formattedError.locations,
+      path: formattedError.path,
+      extensions: {
+        code: 'BAD_USER_INPUT',
+      },
+    };
+  }
 
   return {
-    message: isInternal
-      ? 'Internal server error'
-      : formattedError.message,
-
+    message: 'Internal server error',
     locations: formattedError.locations,
     path: formattedError.path,
-
     extensions: {
-      ...formattedError.extensions,
-      code,
-      ...(details !== undefined
-        ? { details }
-        : {}),
+      code: ErrorCode.INTERNAL_ERROR,
     },
   };
 }

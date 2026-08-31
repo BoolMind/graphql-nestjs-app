@@ -9,10 +9,7 @@ export enum OrderStatus {
 }
 
 export type OrderSortField =
-  | 'CREATED_AT'
-  | 'UPDATED_AT'
-  | 'QUANTITY'
-  | 'STATUS';
+  'CREATED_AT' | 'UPDATED_AT' | 'QUANTITY' | 'STATUS';
 
 export interface CreateOrderData {
   userId: string;
@@ -21,11 +18,9 @@ export interface CreateOrderData {
 }
 
 export interface UpdateOrderData {
-  quantity?: number;
   status?: OrderStatus;
 }
 
-export interface OrderListArgs
-  extends ListArgs<OrderSortField> {
+export interface OrderListArgs extends ListArgs<OrderSortField> {
   status?: OrderStatus;
 }

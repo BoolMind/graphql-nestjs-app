@@ -1,114 +1,272 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# graphql-nestjs
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A production-oriented GraphQL API built with **NestJS**, **Apollo Server**, and **TypeORM** on **MySQL**. It implements a small e-commerce-style domain (Users, Products, Orders) on top of a reusable, hardened application skeleton: optimistic concurrency, transactional stock management, request tracing, rate limiting, query-complexity/depth protection, and unified error handling across both GraphQL and REST.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+---
 
-## Description
+## Features
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+- **Schema-first GraphQL** — `.graphql` type definitions per module, resolved via `@nestjs/graphql` + Apollo Driver (Express).
+- **Domain modules** — `User`, `Product`, `Order`, each with full CRUD, pagination, sorting, and search.
+- **Order lifecycle** — a real state machine (`PENDING → CONFIRMED → SHIPPED → DELIVERED`, with `CANCELLED` branches), transactional stock decrement/restock with pessimistic row locking.
+- **Optimistic concurrency control** — every entity carries a `version` column; concurrent updates fail with a `409 Conflict` instead of silently overwriting.
+- **Generic base layer** — `BaseEntity` and `BaseService<T>` provide pagination, sorting, filtering, and search out of the box for any new module.
+- **Unified error handling** — a single `AppException` hierarchy (`BadRequest`, `NotFound`, `Conflict`, `Validation`) formatted consistently for both GraphQL responses and REST/HTTP responses via `AllExceptionsFilter`.
+- **Database error translation** — MySQL duplicate-key and foreign-key violations are automatically mapped to `409 Conflict` with a readable message (`DatabaseExceptionMapper`).
+- **Request tracing** — every request gets an `x-request-id` (generated or passed through), propagated into GraphQL context and structured logs.
+- **Security**
+  - `helmet` HTTP headers
+  - Configurable CORS, **required** to be explicitly set in production
+  - Rate limiting on `/graphql` (HTTP) and a custom sliding-window limiter for WebSocket subscription connections
+  - GraphQL query **depth limiting** (max depth 8) and **complexity limiting** (max 1000) to prevent abusive queries
+  - Introspection and GraphiQL disabled in production
+- **Realtime** — GraphQL subscriptions (`graphql-ws`) for `userCreated`, `productCreated`, `orderCreated`.
+- **Custom scalar** — strict ISO-8601 `DateTime` scalar with validation on both input and output.
+- **Health checks** — liveness (`/health`) and readiness (`/health/ready`, verifies DB connectivity).
+- **Config validation** — all environment variables validated at boot with Joi; the app fails fast on misconfiguration.
+- **Migrations** — TypeORM migrations, no `synchronize` in production.
 
-## Project setup
+---
 
-```bash
-$ npm install
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Framework | NestJS 12 |
+| API | GraphQL (Apollo Server via `@nestjs/apollo`, Express driver) |
+| ORM / DB | TypeORM + MySQL 8 (`mysql2` driver) |
+| Validation | `class-validator`, `class-transformer`, Joi (env) |
+| Realtime | `graphql-ws`, `graphql-subscriptions` (in-memory PubSub) |
+| Security | `helmet`, `express-rate-limit`, `graphql-depth-limit`, `graphql-query-complexity` |
+| Testing | Jest, Supertest |
+| Lint / Format | `oxlint`, Prettier |
+| Container | Docker (multi-stage), Docker Compose (MySQL) |
+
+---
+
+## Project Structure
+
+```
+src/
+├── common/                  # Cross-cutting, reusable application layer
+│   ├── base/                 # BaseEntity, BaseService<T> (pagination/sort/search)
+│   ├── constants/             # Pagination defaults, app constants
+│   ├── decorators/            # @RequestId()
+│   ├── exceptions/            # AppException hierarchy + error codes
+│   ├── filters/                # AllExceptionsFilter (GraphQL + HTTP)
+│   ├── interceptors/          # LoggingInterceptor
+│   ├── mappers/                # DatabaseExceptionMapper (SQL error → AppException)
+│   ├── middleware/            # request-id middleware
+│   ├── pipes/                  # ValidationPipe (whitelist + structured errors)
+│   ├── security/               # HTTP rate limiter
+│   └── types/                  # ListArgs, PaginatedResult, SortOrder
+├── config/                    # app/database/graphql config + env validation (Joi)
+├── database/                  # TypeORM module, DataSource, migrations, TransactionService
+├── graphql/                    # Apollo module setup, error formatter, custom scalar
+│   ├── plugins/                # Query complexity plugin
+│   └── subscriptions/           # PubSub, WS connection rate limiter
+├── health/                      # Liveness / readiness controller
+├── modules/
+│   ├── user/                    # Entity, service, resolver, GraphQL SDL, DTOs
+│   ├── product/                 # Entity, service, resolver, GraphQL SDL, DTOs
+│   └── order/                   # Entity, service (stock + state machine), resolver, SDL, DTOs
+└── main.ts                      # Bootstrap: helmet, CORS, filters, pipes, rate limiting
 ```
 
-## Compile and run the project
+Each domain module follows the same shape: `entities/`, `graphql/` (resolver + `.graphql` SDL + `inputs/`), `<name>.service.ts`, `<name>.types.ts`, `<name>.module.ts`.
+
+---
+
+## Prerequisites
+
+- Node.js 22+
+- MySQL 8 (or Docker)
+- npm
+
+---
+
+## Getting Started
+
+### 1. Install dependencies
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm ci
 ```
 
-## Run tests
+### 2. Configure environment
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+cp .env.example .env
 ```
 
-## Deployment
+| Variable | Description | Default |
+|---|---|---|
+| `NODE_ENV` | `development` \| `test` \| `production` | `development` |
+| `APP_NAME` | Application name | `graphql-nestjs` |
+| `APP_PORT` | HTTP port | `3000` |
+| `DB_HOST` | MySQL host | — (required) |
+| `DB_PORT` | MySQL port | `3306` |
+| `DB_USERNAME` | MySQL user | — (required) |
+| `DB_PASSWORD` | MySQL password | — (required, may be empty) |
+| `DB_ROOT_PASSWORD` | MySQL root password (Docker Compose only) | — |
+| `DB_NAME` | MySQL database name | — (required) |
+| `DB_SYNCHRONIZE` | Auto-sync schema (dev only, ignored in production) | `false` |
+| `DB_LOGGING` | Log SQL queries | `false` |
+| `GRAPHQL_PATH` | GraphQL endpoint path | `/graphql` |
+| `GRAPHQL_GRAPHIQL` | Enable GraphiQL UI (non-production only) | `false` |
+| `CORS_ORIGINS` | Comma-separated allowed origins — **required in production** | *(empty = allow all in dev)* |
+| `LOG_LEVEL` | `error` \| `warn` \| `log` \| `debug` \| `verbose` | `log` |
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### 3. Start MySQL
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+docker compose up -d
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+### 4. Run migrations
 
-## Observability
+```bash
+npm run migration:run
+```
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+### 5. Start the app
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
+```bash
+npm run start:dev
+```
 
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
+The API is available at `http://localhost:3000/graphql`. Health checks at `/health` and `/health/ready`.
 
-## Resources
+---
 
-Check out a few resources that may come in handy when working with NestJS:
+## GraphQL API
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+### User
 
-## Support
+```graphql
+type Query {
+  users(page: Int, limit: Int, sortBy: UserSortField, sortOrder: SortOrder, search: String): UserConnection!
+  user(id: ID!): User!
+}
+type Mutation {
+  createUser(input: CreateUserInput!): User!
+  updateUser(id: ID!, input: UpdateUserInput!): User!
+  deleteUser(id: ID!): Boolean!
+}
+type Subscription {
+  userCreated: User!
+}
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+### Product
 
-## Stay in touch
+```graphql
+type Query {
+  products(page: Int, limit: Int, sortBy: ProductSortField, sortOrder: SortOrder, search: String): ProductConnection!
+  product(id: ID!): Product!
+}
+type Mutation {
+  createProduct(input: CreateProductInput!): Product!
+  updateProduct(id: ID!, input: UpdateProductInput!): Product!
+  deleteProduct(id: ID!): Boolean!
+}
+type Subscription {
+  productCreated: Product!
+}
+```
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+### Order
+
+```graphql
+type Query {
+  orders(page: Int, limit: Int, sortBy: OrderSortField, sortOrder: SortOrder, status: OrderStatus): OrderConnection!
+  order(id: ID!): Order!
+}
+type Mutation {
+  createOrder(input: CreateOrderInput!): Order!   # locks product stock, decrements it, fails if insufficient
+  updateOrder(id: ID!, input: UpdateOrderInput!): Order!  # status transitions only; quantity is immutable
+}
+type Subscription {
+  orderCreated(userId: ID!): Order!
+}
+```
+
+**Order status transitions** (enforced server-side):
+
+```
+PENDING   → CONFIRMED, CANCELLED
+CONFIRMED → SHIPPED, CANCELLED
+SHIPPED   → DELIVERED
+DELIVERED → (terminal)
+CANCELLED → (terminal, restocks the product)
+```
+
+All list queries return a `*Connection` type: `{ items, total, page, limit, totalPages, hasNextPage, hasPreviousPage }`.
+
+---
+
+## Error Format
+
+Every error — GraphQL or REST — carries a stable `code`:
+
+`BAD_REQUEST` · `NOT_FOUND` · `CONFLICT` · `VALIDATION_ERROR` · `INTERNAL_ERROR`
+
+GraphQL errors are returned in `extensions.code` (with `extensions.details` for validation field errors). Internal errors never leak messages or stack traces in production. REST errors (from `/health`, etc.) follow:
+
+```json
+{
+  "statusCode": 503,
+  "code": "SERVICE_UNAVAILABLE",
+  "message": "Application is not ready",
+  "requestId": "...",
+  "timestamp": "...",
+  "path": "/health/ready"
+}
+```
+
+---
+
+## Security & Limits
+
+- **Depth limit**: queries deeper than 8 levels are rejected.
+- **Complexity limit**: queries with estimated complexity over 1000 are rejected.
+- **Rate limiting**: 100 requests/minute per client on `/graphql`; WebSocket subscription connections are capped at 20 per minute per IP.
+- **CORS**: must be explicitly configured (`CORS_ORIGINS`) when `NODE_ENV=production`, or the app refuses to boot.
+- **Introspection / GraphiQL**: disabled automatically outside development.
+- **Batched HTTP requests**: disabled.
+
+---
+
+## Scripts
+
+| Command | Description |
+|---|---|
+| `npm run start:dev` | Start with hot reload |
+| `npm run build` | Compile to `dist/` |
+| `npm run start:prod` | Run compiled build |
+| `npm test` | Unit tests |
+| `npm run test:e2e` | End-to-end tests |
+| `npm run test:cov` | Coverage report |
+| `npm run lint` | Lint via `oxlint` |
+| `npm run format` | Format via Prettier |
+| `npm run migration:generate` | Generate a new migration from entity changes |
+| `npm run migration:run` | Apply pending migrations |
+| `npm run migration:revert` | Revert the last migration |
+
+---
+
+## Docker
+
+```bash
+docker compose up -d        # MySQL only
+docker build -t graphql-nestjs .
+docker run --env-file .env -p 3000:3000 graphql-nestjs
+```
+
+The `Dockerfile` uses a multi-stage build (compile in a `build` stage, install only production dependencies in the `runtime` stage) and runs as the non-root `node` user.
+
+---
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+UNLICENSED — private project.

@@ -4,17 +4,16 @@ import {
   FindOptionsRelations,
   FindOptionsWhere,
   Repository,
-  SelectQueryBuilder,
 } from 'typeorm';
 
 import { DEFAULT_LIMIT, DEFAULT_PAGE, MAX_LIMIT } from '../../constants';
 
 import { ListArgs, PaginatedResult } from '../../types';
 
-import { NotFoundException } from '../../exceptions';
+import { ConflictException, NotFoundException } from '../../exceptions';
 
 export abstract class BaseService<
-  TEntity extends { id: string },
+  TEntity extends { id: string; version: number },
   TCreateInput extends DeepPartial<TEntity> = DeepPartial<TEntity>,
   TUpdateInput extends DeepPartial<TEntity> = DeepPartial<TEntity>,
   TListArgs extends ListArgs = ListArgs,
@@ -46,6 +45,8 @@ export abstract class BaseService<
   async findById(id: string): Promise<TEntity> {
     const entity = await this.repository.findOne({
       where: { id } as FindOptionsWhere<TEntity>,
+
+      relations: this.relations(),
     });
 
     if (!entity) {
@@ -91,10 +92,7 @@ export abstract class BaseService<
 
     for (const [relation, enabled] of Object.entries(relations)) {
       if (enabled === true) {
-        queryBuilder.leftJoinAndSelect(
-          `entity.${relation}`,
-          relation,
-        );
+        queryBuilder.leftJoinAndSelect(`entity.${relation}`, relation);
       }
     }
 
@@ -141,10 +139,28 @@ export abstract class BaseService<
 
   async update(id: string, input: TUpdateInput): Promise<TEntity> {
     const entity = await this.findById(id);
+    const expectedVersion = (entity as TEntity & { version: number }).version;
 
-    this.repository.merge(entity, input as DeepPartial<TEntity>);
+    const updateData = {
+      ...(input as Record<string, unknown>),
+      version: () => 'version + 1',
+    };
 
-    return this.repository.save(entity);
+    const result = await this.repository
+      .createQueryBuilder()
+      .update()
+      .set(updateData as any)
+      .where('id = :id', { id })
+      .andWhere('version = :version', { version: expectedVersion })
+      .execute();
+
+    if (result.affected !== 1) {
+      throw new ConflictException(
+        `${this.entityName()} was modified by another request. Please retry.`,
+      );
+    }
+
+    return this.findById(id);
   }
 
   async delete(id: string): Promise<boolean> {

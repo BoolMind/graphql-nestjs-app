@@ -1,3 +1,4 @@
+import { Inject } from '@nestjs/common';
 import {
   Args,
   ID,
@@ -12,17 +13,15 @@ import { PubSub } from 'graphql-subscriptions';
 import { Product } from '../entities/product.entity';
 import { ProductService } from '../product.service';
 import type { ProductListArgs } from '../product.types';
-import {
-  CreateProductInput,
-  UpdateProductInput,
-} from './inputs';
+import { CreateProductInput, UpdateProductInput } from './inputs';
 
-export const PRODUCT_CREATED = 'PRODUCT_CREATED';
+import { PUBSUB, PUBSUB_EVENTS } from '../../../graphql/subscriptions/pubsub';
 
 @Resolver(() => Product)
 export class ProductResolver {
   constructor(
     private readonly productService: ProductService,
+    @Inject(PUBSUB)
     private readonly pubSub: PubSub,
   ) {}
 
@@ -75,7 +74,7 @@ export class ProductResolver {
   ) {
     const product = await this.productService.create(input);
 
-    await this.pubSub.publish(PRODUCT_CREATED, {
+    await this.pubSub.publish(PUBSUB_EVENTS.PRODUCT_CREATED, {
       productCreated: product,
     });
 
@@ -101,10 +100,8 @@ export class ProductResolver {
     return this.productService.delete(id);
   }
 
-  @Subscription('productCreated', {
-    filter: () => true,
-  })
+  @Subscription('productCreated')
   productCreated() {
-    return this.pubSub.asyncIterableIterator(PRODUCT_CREATED);
+    return this.pubSub.asyncIterableIterator(PUBSUB_EVENTS.PRODUCT_CREATED);
   }
 }

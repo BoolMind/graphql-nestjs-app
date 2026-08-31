@@ -1,22 +1,22 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
-import {
-  ApolloDriver,
-  ApolloDriverConfig,
-} from '@nestjs/apollo';
+
+import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+
 import { join } from 'path';
+import type { IncomingMessage } from 'http';
+
+import depthLimit from 'graphql-depth-limit';
+
 import type { Request, Response } from 'express';
 
-import { UserModule } from '../modules/user/user.module';
 import { formatGraphQLError } from './graphql-exception.formatter';
-import { REQUEST_ID_HEADER } from '../common/middleware/request-id.middleware';
+import { DateTimeScalar } from './scalars/date-time.scalar';
+import { isWsConnectionAllowed } from './subscriptions/ws-rate-limiter';
+import { QueryComplexityPlugin } from './plugins/query-complexity.plugin';
 
-interface GraphQLContext {
-  req: Request;
-  res: Response;
-  requestId: string;
-}
+import { REQUEST_ID_HEADER } from '../common/middleware/request-id.middleware';
 
 @Module({
   imports: [
@@ -25,54 +25,59 @@ interface GraphQLContext {
 
       inject: [ConfigService],
 
-      useFactory: (
-        configService: ConfigService,
-      ): ApolloDriverConfig => {
+      useFactory: (configService: ConfigService): ApolloDriverConfig => {
         const isProduction =
-          configService.getOrThrow<string>(
-            'app.environment',
-          ) === 'production';
+          configService.getOrThrow<string>('app.environment') === 'production';
 
         return {
-          typePaths: [
-            join(process.cwd(), 'src/**/*.graphql'),
-          ],
+          typePaths: [join(__dirname, '..', '**/*.graphql')],
 
           sortSchema: true,
 
-          path: configService.getOrThrow<string>(
-            'graphql.path',
-          ),
+          path: configService.getOrThrow<string>('graphql.path'),
 
-          playground: !isProduction,
+          graphiql: configService.getOrThrow<boolean>('graphql.graphiql'),
+
+          introspection: !isProduction,
+
+          csrfPrevention: true,
+
+          allowBatchedHttpRequests: false,
+
+          includeStacktraceInErrorResponses: !isProduction,
+
+          subscriptions: {
+            'graphql-ws': {
+              onConnect: (ctx) => {
+                const extra = ctx.extra as
+                  { request?: IncomingMessage } | undefined;
+                const ip = extra?.request?.socket?.remoteAddress ?? 'unknown';
+
+                if (!isWsConnectionAllowed(ip)) {
+                  throw new Error(
+                    'Too many subscription connection attempts. Please try again later.',
+                  );
+                }
+              },
+            },
+          },
+
+          validationRules: [depthLimit(8)],
 
           formatError: formatGraphQLError,
 
-          context: ({
-            req,
-            res,
-          }: {
-            req: Request;
-            res: Response;
-          }): GraphQLContext => {
+          context: ({ req, res }: { req?: Request; res?: Response }) => {
             const requestId =
-              req.header(REQUEST_ID_HEADER) ??
-              res
-                .getHeader(REQUEST_ID_HEADER)
-                ?.toString() ??
+              req?.header(REQUEST_ID_HEADER) ??
+              res?.getHeader(REQUEST_ID_HEADER)?.toString() ??
               'unknown';
 
-            return {
-              req,
-              res,
-              requestId,
-            };
+            return { req, res, requestId };
           },
         };
       },
     }),
-
-    UserModule,
   ],
+  providers: [DateTimeScalar, QueryComplexityPlugin],
 })
 export class AppGraphQLModule {}
